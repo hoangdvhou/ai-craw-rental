@@ -8,6 +8,3 @@ services:
     restart: always
     environment:
       - NODE_ENV=production
-    volumes:
-      # Optional: Persist uploads if needed, though usually tmp
-      - ./uploads:/app/uploads
