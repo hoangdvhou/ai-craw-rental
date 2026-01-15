@@ -1,0 +1,42 @@
+# Standard columns that every output file will have
+standard_columns:
+  - name: title
+    type: string
+    required: true
+  - name: price
+    type: float
+    required: false
+  - name: url
+    type: string
+    required: true
+  - name: description
+    type: string
+    required: false
+  - name: image_url
+    type: string
+    required: false
+  - name: source
+    type: string
+    required: false
+
+# Source configurations
+sources:
+  - name: "shopee_crawl"
+    # Columns that, if present, help identify this format. 
+    # If multiple sources match, the one with more matches wins.
+    fingerprint_columns: ["Item Name", "Price", "Item Link"] 
+    mapping:
+      "Item Name": title
+      "Price": price
+      "Item Link": url
+      "Product Description": description
+      "Image": image_url
+
+  - name: "tiki_crawl"
+    fingerprint_columns: ["product_title", "original_price"]
+    mapping:
+      "product_title": title
+      "original_price": price
+      "product_url": url
+      "desc": description
+      "img_link": image_url

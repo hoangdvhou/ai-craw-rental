@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  ai-crawl-converter:
+    build: .
+    ports:
+      - "3000:3000"
+    restart: always
+    environment:
+      - NODE_ENV=production
+    volumes:
+      # Optional: Persist uploads if needed, though usually tmp
+      - ./uploads:/app/uploads
