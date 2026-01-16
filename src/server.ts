@@ -20,7 +20,28 @@ app.use(express.static(path.join(process.cwd(), 'public')));
 function getExportUrl(url: string): string | null {
     const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
     if (!match) return null;
-    return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=xlsx`;
+
+    let gid: string | null = null;
+    try {
+        const urlObj = new URL(url);
+        // Try getting from search params first
+        gid = urlObj.searchParams.get('gid');
+        // If not, try hash (often #gid=...)
+        if (!gid && urlObj.hash && urlObj.hash.includes('gid=')) {
+            const hashParts = urlObj.hash.split('gid=');
+            if (hashParts.length > 1) {
+                gid = hashParts[1].split('&')[0]; // Handle cases like #gid=123&other=...
+            }
+        }
+    } catch (e) {
+        // Fallback or ignore invalid URL object creation
+    }
+
+    let exportUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=xlsx`;
+    if (gid) {
+        exportUrl += `&gid=${gid}`;
+    }
+    return exportUrl;
 }
 
 app.post('/convert-url', async (req, res) => {
