@@ -27,22 +27,50 @@
         </div>
 
         <div class="bg-white rounded-xl shadow-lg p-8">
-            <!-- Upload Zone -->
-            <div id="drop-zone"
-                class="border-2 border-dashed border-gray-300 rounded-lg p-10 text-center cursor-pointer transition-all duration-200 hover:border-indigo-500">
-                <div class="space-y-4">
-                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
-                        <path
-                            d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                    <div class="text-gray-600">
-                        <span class="font-medium text-indigo-600 hover:text-indigo-500">Click to upload</span> or drag
-                        and drop
+            <!-- Tabs -->
+            <div class="flex space-x-4 mb-6">
+                <button id="tab-file"
+                    class="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-md">Upload File</button>
+                <button id="tab-url" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">Google
+                    Sheets URL</button>
+            </div>
+
+            <!-- File Zone -->
+            <div id="file-zone">
+                <div id="drop-zone"
+                    class="border-2 border-dashed border-gray-300 rounded-lg p-10 text-center cursor-pointer transition-all duration-200 hover:border-indigo-500">
+                    <div class="space-y-4">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none"
+                            viewBox="0 0 48 48">
+                            <path
+                                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <div class="text-gray-600">
+                            <span class="font-medium text-indigo-600 hover:text-indigo-500">Click to upload</span> or
+                            drag and drop
+                        </div>
+                        <p class="text-xs text-gray-500">XLSX, XLS (Max 10MB)</p>
                     </div>
-                    <p class="text-xs text-gray-500">XLSX, XLS (Max 10MB)</p>
                 </div>
                 <input id="file-upload" type="file" class="hidden" accept=".xlsx,.xls">
+            </div>
+
+            <!-- URL Zone -->
+            <div id="url-zone" class="hidden">
+                <div class="space-y-4">
+                    <label class="block text-sm font-medium text-gray-700">Google Sheets Link (Public)</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/..."
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-3 border">
+                        <button id="convert-url-btn"
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                            Convert
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500">Make sure the sheet is "Public" or "Anyone with the link can view"
+                    </p>
+                </div>
             </div>
 
             <!-- Loading State -->
@@ -82,7 +110,34 @@
         const downloadBtn = document.getElementById('download-btn');
         const recordCount = document.getElementById('record-count');
 
+        // New Elements
+        const tabFile = document.getElementById('tab-file');
+        const tabUrl = document.getElementById('tab-url');
+        const fileZone = document.getElementById('file-zone');
+        const urlZone = document.getElementById('url-zone');
+        const sheetUrlInput = document.getElementById('sheet-url');
+        const convertUrlBtn = document.getElementById('convert-url-btn');
+
         let currentData = null;
+
+        // Tab Switching Logic
+        tabFile.addEventListener('click', () => {
+            tabFile.classList.add('bg-indigo-50', 'text-indigo-600');
+            tabFile.classList.remove('text-gray-500');
+            tabUrl.classList.remove('bg-indigo-50', 'text-indigo-600');
+            tabUrl.classList.add('text-gray-500');
+            fileZone.classList.remove('hidden');
+            urlZone.classList.add('hidden');
+        });
+
+        tabUrl.addEventListener('click', () => {
+            tabUrl.classList.add('bg-indigo-50', 'text-indigo-600');
+            tabUrl.classList.remove('text-gray-500');
+            tabFile.classList.remove('bg-indigo-50', 'text-indigo-600');
+            tabFile.classList.add('text-gray-500');
+            urlZone.classList.remove('hidden');
+            fileZone.classList.add('hidden');
+        });
 
         // Drag & Drop handlers
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -119,12 +174,7 @@
         }
 
         async function uploadFile(file) {
-            // Reset UI
-            loading.classList.remove('hidden');
-            resultSection.classList.add('hidden');
-            errorMsg.classList.add('hidden');
-            dropZone.classList.add('opacity-50', 'pointer-events-none');
-
+            startLoading();
             const formData = new FormData();
             formData.append('file', file);
 
@@ -133,20 +183,50 @@
                     method: 'POST',
                     body: formData
                 });
-
                 const data = await response.json();
-
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || 'Conversion failed');
-                }
-
+                if (!response.ok || !data.success) throw new Error(data.error || 'Conversion failed');
                 showResult(data);
             } catch (err) {
                 showError(err.message);
             } finally {
-                loading.classList.add('hidden');
-                dropZone.classList.remove('opacity-50', 'pointer-events-none');
+                stopLoading();
             }
+        }
+
+        // URL Conversion Logic
+        convertUrlBtn.addEventListener('click', async () => {
+            const url = sheetUrlInput.value.trim();
+            if (!url) return showError('Please enter a URL');
+
+            startLoading();
+            try {
+                const response = await fetch('/convert-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || 'Conversion failed');
+                showResult(data);
+            } catch (err) {
+                showError(err.message);
+            } finally {
+                stopLoading();
+            }
+        });
+
+        function startLoading() {
+            loading.classList.remove('hidden');
+            resultSection.classList.add('hidden');
+            errorMsg.classList.add('hidden');
+            dropZone.classList.add('opacity-50', 'pointer-events-none');
+            convertUrlBtn.disabled = true;
+        }
+
+        function stopLoading() {
+            loading.classList.add('hidden');
+            dropZone.classList.remove('opacity-50', 'pointer-events-none');
+            convertUrlBtn.disabled = false;
         }
 
         function showResult(data) {

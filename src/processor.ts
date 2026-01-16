@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { RoomRecord } from './types';
 import { v4 as uuidv4 } from 'uuid';
+import { AiColumnMapper } from './ai_mapper';
 
 export class ExcelProcessor {
     private currentAddress: string = '';
@@ -11,7 +12,7 @@ export class ExcelProcessor {
         'phòng': 'so_phong',
         'số phòng': 'so_phong',
         'mã phòng': 'so_phong',
-        'mã': 'so_phong', // specific context
+        // 'mã': 'so_phong', // Removed: too generic, matches "máy", "camera"...
         'giá': 'gia_tien',
         'giá tiền': 'gia_tien',
         'đơn giá': 'gia_tien',
@@ -32,9 +33,13 @@ export class ExcelProcessor {
         'chủ nhà': 'sdt_quan_ly',
         'ghi chú': 'ghi_chu',
         'note': 'ghi_chu',
+        'địa chỉ': 'dia_chi',
+        'địa chỉ nhà': 'dia_chi',
         'stt': 'ignore',
         'số tt': 'ignore'
     };
+
+    private aiMapper = new AiColumnMapper();
 
     /**
      * Entry point to process a single file.
@@ -45,57 +50,117 @@ export class ExcelProcessor {
 
         const records: RoomRecord[] = [];
 
-        // Check all visible sheets
-        workbook.worksheets.forEach(sheet => {
-            if (sheet.state !== 'visible') return;
+        // Iterate sheets sequentially to allow await
+        for (const sheet of workbook.worksheets) {
+            if (sheet.state !== 'visible') continue;
 
             console.log(`Processing sheet: ${sheet.name}`);
             this.currentAddress = '';
-            let headerMap: Map<number, keyof RoomRecord> = new Map();
 
+            // 1. Determine Header Map
+            let headerMap = this.detectHeaderMapByRules(sheet);
+
+            if (headerMap.size === 0) {
+                console.log('[Info] No standard headers found. Attempting AI mapping...');
+                headerMap = await this.detectHeaderMapByAI(sheet);
+            }
+
+            if (headerMap.size === 0) {
+                console.log('[Warn] Could not determine headers for sheet:', sheet.name);
+                continue;
+            }
+
+            console.log(`[DEBUG] Final Header Map for ${sheet.name}:`, Object.fromEntries(headerMap));
+
+            // 2. Process Rows
             sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
                 if (row.hidden) return;
 
-                const rowValuesStr = this.getRowValues(row).map(v => String(v).trim()).join(' | ');
+                // Skip rows before the header (heuristic: if row number is <= header row?)
+                // Actually the map uses column indices, so any row *could* be data.
+                // But usually data is below header.
+                // For simplicity, we just try to parse every row. if it looks like a header, ignore it.
 
-                // State 1: Check for Section Header (Address)
+                if (this.isHeaderRow(row)) return;
+
+                // Check Section Header
                 if (this.isSectionHeader(row)) {
                     this.currentAddress = this.extractAddress(row);
                     console.log(`[DEBUG] Found Address: ${this.currentAddress}`);
                     return;
                 }
 
-                // State 2: Check for Column Headers
-                if (this.isHeaderRow(row)) {
-                    const newMap = this.mapHeaders(row);
-                    if (newMap.size > 0) {
-                        headerMap = newMap;
-                        console.log(`[DEBUG] Mapped headers at row ${rowNumber}:`, Object.fromEntries(headerMap));
-                    } else {
-                        console.log(`[DEBUG] Header candidates found but mapping failed at row ${rowNumber}: ${rowValuesStr}`);
-                    }
-                    return;
-                }
-
-                // State 3: Data Row
-                if (headerMap.size > 0) {
-                    const hasMappedData = this.checkRowHasData(row, headerMap);
-
-                    if (hasMappedData) {
-                        const record = this.parseRecord(row, headerMap, fileSourceId);
-                        if (record) {
-                            records.push(record);
-                        }
+                // Data Row
+                const hasMappedData = this.checkRowHasData(row, headerMap);
+                if (hasMappedData) {
+                    const record = this.parseRecord(row, headerMap, fileSourceId);
+                    if (record) {
+                        records.push(record);
                     }
                 }
             });
-        });
+        }
 
         return records;
     }
 
+    private detectHeaderMapByRules(sheet: ExcelJS.Worksheet): Map<number, keyof RoomRecord> {
+        let bestMap = new Map<number, keyof RoomRecord>();
+
+        sheet.eachRow((row, _rowNumber) => {
+            if (bestMap.size > 0) return; // Found one already
+            if (this.isHeaderRow(row)) {
+                const map = this.mapHeaders(row);
+
+                // Validation: correct map should not have too many duplicates
+                // e.g. if 10 columns map to 'so_phong', it's likely a calendar or schedule, not a header
+                const counts = new Map<string, number>();
+                map.forEach((key) => {
+                    counts.set(key, (counts.get(key) || 0) + 1);
+                });
+
+                const uniqueFields = counts.size;
+                const maxDuplicates = Math.max(...counts.values());
+
+                // Rule 1: We need at least 2 distinct fields (e.g. Room + Price) to be confident
+                if (uniqueFields < 2) return;
+
+                // Rule 2: If any single field appears more than 3 times, it's suspicious
+                if (maxDuplicates > 3) return;
+
+                if (map.size > 0) {
+                    // Rule 3: Must have Price and Room fields (Core data)
+                    const hasPrice = Array.from(map.values()).includes('gia_tien');
+                    const hasRoom = Array.from(map.values()).includes('so_phong');
+
+                    if (hasPrice && hasRoom) {
+                        bestMap = map;
+                    }
+                }
+            }
+        });
+
+        return bestMap;
+    }
+
+    private async detectHeaderMapByAI(sheet: ExcelJS.Worksheet): Promise<Map<number, keyof RoomRecord>> {
+        const sampleRows: any[][] = [];
+        sheet.eachRow((row, rowNumber) => {
+            if (rowNumber > 20) return;
+            // Use values directly to preserve column indices (ExcelJS uses 1-based sparse array for row.values)
+            const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+            // Fill gaps with empty string to align columns for AI
+            const cleanValues = values.map(v => v === undefined || v === null ? '' : String(v));
+            sampleRows.push(cleanValues);
+        });
+
+        return await this.aiMapper.getMapping(sampleRows);
+    }
+
     private isSectionHeader(row: ExcelJS.Row): boolean {
         const values = this.getRowValues(row);
+        if (values.length > 5) return false; // Data rows usually have many columns
+
         if (values.length === 0) return false;
 
         const firstVal = String(values[0]).trim();
@@ -126,6 +191,8 @@ export class ExcelProcessor {
         let matches = 0;
         row.eachCell((cell) => {
             const val = String(cell.value).toLowerCase();
+            if (val.length > 50) return; // Header cells are usually short
+
             if (val.includes('phòng') || val.includes('mã') || val.includes('số phòng')) matches++;
             if (val.includes('giá') || val.includes('cọc') || val.includes('tiền')) matches++;
             if (val.includes('ảnh')) matches++;
@@ -150,6 +217,7 @@ export class ExcelProcessor {
         const map = new Map<number, keyof RoomRecord>();
         row.eachCell((cell, colNumber) => {
             const val = String(cell.value).toLowerCase().trim();
+            if (val.length > 50) return; // Ignore long text for headers
 
             // Exact matches first?
 
@@ -167,11 +235,8 @@ export class ExcelProcessor {
     }
 
     private parseRecord(row: ExcelJS.Row, headerMap: Map<number, keyof RoomRecord>, fileSourceId: string): RoomRecord | null {
-        // If we don't have a current address, we can't create a valid record strictly speaking.
-        // But maybe we can fallback or alert? 
         // Requirement said: "Mọi logic code phải tuân thủ... id_phong = ... + địa chỉ..."
         // So address is mandatory.
-        if (!this.currentAddress) return null;
 
         const record: Partial<RoomRecord> = {
             dia_chi: this.currentAddress,
@@ -209,6 +274,7 @@ export class ExcelProcessor {
 
         if (!hasData) return null;
         if (!record.so_phong) return null; // Mandatory field?
+        if (!record.dia_chi) return null; // Mandatory field
 
         // Generate ID
         // 10 chars of file_id + address + room
