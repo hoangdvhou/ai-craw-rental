@@ -16,4 +16,4 @@ RUN npm run build
 EXPOSE 3000
 
 # Start server
-CMD ["node", "dist/src/server.js"]
+CMD ["node", "dist/server.js"]
